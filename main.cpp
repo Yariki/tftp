@@ -264,6 +264,38 @@ bool send_and_wait_for_ack(Socket s,
     }
 }
 
+void handle_rrq(Socket s, const sockaddr_in& client, const fs::path& root, const std::string& filename)
+{
+    std::ifstream file(root / filename, std::ios::binary);
+    if(!file)
+    {
+        send_error(s, client, 0, "File not found or not readable");
+        return;
+    }
+
+    std::array<char, BLOCK_SIZE> chunk {};
+    std::uint16_t block = 1;
+    while(true)
+    {
+        file.read(chunk.data(), chunk.size());
+        std::streamsize count = file.gcount();
+        if(file.bad())
+        {
+            send_error(s, client, 0, "File read error");
+            return;
+        }
+        auto packet = make_data(block, chunk.data(), static_cast<std::size_t>(count));
+
+        if(!send_and_wait_for_ack(s, client, packet, block))
+        {
+            std::cerr << "RRQ aborted (no ACK): " << filename << '\n';
+            return;
+        }
+
+        if(count  < static_cast<std::streamsize>(BLOCK_SIZE)) break;
+        ++block;
+    }
+}
 
 
 int main ()
