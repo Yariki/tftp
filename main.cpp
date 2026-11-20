@@ -75,15 +75,11 @@ void add_u16(std::vector<Byte>&  buffer, std::uint16_t value)
     buffer.push_back(static_cast<Byte>(value & 0xFF));
 }
 
-std::vector<Byte> make_ack(std::uint16_t block, const char* bytes, std::size_t count)
+std::vector<Byte> make_ack(std::uint16_t block)
 {
     std::vector<Byte> packet;
     add_u16(packet, ACK);
     add_u16(packet, block);
-    for (std::size_t i = 0; i < count; ++i)
-    {
-        packet.push_back(static_cast<Byte>(bytes[i]));
-    }
     return packet;
 }
 
@@ -296,6 +292,25 @@ void handle_rrq(Socket s, const sockaddr_in& client, const fs::path& root, const
         ++block;
     }
 }
+
+void acknowledge_final_duplicates(Socket s, const sockaddr_in& client, std::uint16_t final_block)
+{
+    std::array<Byte, PACKET_CAPACITY> buffer{};
+    for (int i = 0; i < 2; i++)
+    {
+        sockaddr_in from {};
+        int n = receive_packet(s, buffer, from);
+        if(n < 0) continue;
+        if(!same_peer(from,client))
+        {
+            send_error(s, from, 5, "Unknown transfer ID");
+            continue;
+        }
+        if(n >= 4 && read_u16(buffer.data()) == DATA && read_u16(buffer.data() + 2) == final_block)
+            send_packet(s, client, make_ack(final_block));
+    }
+}
+
 
 
 int main ()
