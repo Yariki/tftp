@@ -234,6 +234,38 @@ bool parse_request(const Byte* bytes, int count, Request& req)
     return true;
 }
 
+bool send_and_wait_for_ack(Socket s, 
+    const sockaddr_in& client,
+    const std::vector<Byte>& data, 
+    std::uint16_t expected_block)
+{
+    std::array<Byte, PACKET_CAPACITY> buffer{};
+
+    for(int attempt = 0; attempt < RETRIES; ++attempt)
+    {
+        if(!send_packet(s, client, data)) 
+            return false;
+        for(int ignored = 0; ignored < 100; ++ignored)
+        {
+            sockaddr_in from {};
+            int n = receive_packet(s, buffer, from);
+            if(n < 0) break;
+            if(!same_peer(from, client))
+            {
+                send_error(s,from, 5, "Unknown tranfer ID");
+                continue;
+            }
+            if (n >= 4 && read_u16(buffer.data()) == ACK && 
+                read_u16(buffer.data() + 2) == expected_block)
+                return true;
+            if(n >= 2 && read_u16(buffer.data()) == ERROR)
+                return false; 
+        }
+    }
+}
+
+
+
 int main ()
 {
     Socket server_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
