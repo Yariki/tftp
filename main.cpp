@@ -311,6 +311,106 @@ void acknowledge_final_duplicates(Socket s, const sockaddr_in& client, std::uint
     }
 }
 
+void handle_wrq(Socket s,
+    const sockaddr_in& client,
+    const fs::path& root,
+    const std::string& filename)
+{
+    fs::path destination = root / filename;
+    if(fs::exists(destination))
+    {
+        send_error(s, client, 6, "File already exists");
+        return;
+    }
+    std::ofstream file(destination, std::ios::binary | std::ios::trunc);
+    if(!file)
+    {
+        send_error(s, client, 2, "Cannot create file");
+        return;
+    }
+
+    std::uint16_t expected = 1;
+    auto last_ack = make_ack(0);
+    bool success = false;
+    if (!send_packet(s, client, last_ack))
+    {
+        file.close();
+        fs::remove(destination);
+        return;
+    }
+
+    std::array<Byte, PACKET_CAPACITY> buffer {};
+    int timeouts = 0;
+    while(timeouts < RETRIES)
+    {
+        sockaddr_in from {};
+        int n = receive_packet(s, buffer, from);
+        if(n < 0)
+        {
+            ++timeouts;
+            send_packet(s, client, last_ack);
+            continue;
+        }
+        if(!same_peer(from, client))
+        {
+            send_error(s, client, 5, "Unknown transfer ID");
+            continue;
+        }
+        if(n >= 2 && read_u16(buffer.data()) == ERROR) break;
+        if(n < 4 
+            || n > static_cast<int>(BLOCK_SIZE * 4) 
+            || read_u16(buffer.data()) != DATA)
+        {
+            send_error(s, client, 4, "Expected DATA packet");
+            break;
+        }
+        
+        std::uint16_t received_block = read_u16(buffer.data() + 2);
+        if(received_block == expected)
+        {
+            int payload_size =  n - 4;
+            file.write(reinterpret_cast<char*>(buffer.data() + 4), payload_size);
+            if(!file)
+            {
+                send_error(s, client, 3, "Disk wrate failed");
+                break;
+            }
+            last_ack = make_ack(received_block);
+            if(!send_packet(s, client, last_ack)) break;
+            timeouts = 0;
+            ++expected;
+
+            if(payload_size < static_cast<int>(BLOCK_SIZE))
+            {
+                file.close();
+                if(!file)
+                {
+                    send_error(s, client, 3, "File close failed");
+                    break;
+                }
+                success = true;
+                acknowledge_final_duplicates(s, client, received_block);
+                break;
+            } 
+            else if(received_block == static_cast<std::uint16_t>(expected - 1))
+            {
+                send_packet(s, client, last_ack);
+            }
+        }
+    }
+
+    if(!success)
+    {
+        file.close();
+        std::error_code ignored;
+        fs::remove(destination, ignored);
+        std::cerr << "WRQ aborted: "<< filename << std::endl;
+    }
+    else 
+    {
+        std::cout << "Upload complete: " << filename << std::endl;
+    }
+}
 
 
 int main ()
