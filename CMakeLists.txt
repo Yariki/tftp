@@ -5,11 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 
-add_executable(ftf_server main.cpp)
+add_executable(tftp_server main.cpp)
 
 
-if(WIN32)
-    target_link_libraries(tftp_server PRIVATE  ws2_32)
+if(WIN32 OR MINGW OR CMAKE_CXX_COMPILER MATCHES "mingw|w64-mingw32")
+    target_link_libraries(tftp_server PRIVATE ws2_32)
 endif()
 
 if(MSVC)

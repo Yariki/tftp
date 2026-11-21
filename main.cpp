@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -40,7 +41,13 @@ constexpr std::size_t BLOCK_SIZE = 512;
 constexpr int RETRIES = 5;
 constexpr int PACKET_CAPACITY = 2048;
 
-enum OpCode : std::uint16_t { RRQ = 1, WRQ = 2, DATA = 3, ACK = 4, ERROR = 5 };
+enum OpCode : std::uint16_t {
+  RRQ = 1,
+  WRQ = 2,
+  DATA = 3,
+  ACK = 4,
+  TFTP_ERROR = 5
+};
 
 std::uint16_t read_u16(const Byte *buffer) {
   return (static_cast<std::uint16_t>(buffer[0]) << 8) | buffer[1];
@@ -95,7 +102,7 @@ bool same_peer(const sockaddr_in &a, const sockaddr_in &b) {
 void send_error(Socket s, const sockaddr_in &peer,
                 const std::uint16_t error_code, const std::string &message) {
   std::vector<Byte> packet;
-  add_u16(packet, ERROR);
+  add_u16(packet, TFTP_ERROR);
   add_u16(packet, error_code);
   packet.insert(packet.end(), message.begin(), message.end());
   packet.push_back(0);
@@ -138,10 +145,11 @@ bool safe_name(const std::string &name) {
     return false;
   }
   for (unsigned char ch : name) {
-    if (std::isalnum(ch) && ch != '.' && ch != '_' && ch != '-') {
+    if (!std::isalnum(ch) && ch != '.' && ch != '_' && ch != '-') {
       return false;
     }
   }
+  return true;
 }
 
 struct Request {
@@ -200,10 +208,11 @@ bool send_and_wait_for_ack(Socket s, const sockaddr_in &client,
       if (n >= 4 && read_u16(buffer.data()) == ACK &&
           read_u16(buffer.data() + 2) == expected_block)
         return true;
-      if (n >= 2 && read_u16(buffer.data()) == ERROR)
+      if (n >= 2 && read_u16(buffer.data()) == TFTP_ERROR)
         return false;
     }
   }
+  return false;
 }
 
 void handle_rrq(Socket s, const sockaddr_in &client, const fs::path &root,
@@ -291,7 +300,7 @@ void handle_wrq(Socket s, const sockaddr_in &client, const fs::path &root,
       send_error(s, client, 5, "Unknown transfer ID");
       continue;
     }
-    if (n >= 2 && read_u16(buffer.data()) == ERROR)
+    if (n >= 2 && read_u16(buffer.data()) == TFTP_ERROR)
       break;
     if (n < 4 || n > static_cast<int>(BLOCK_SIZE * 4) ||
         read_u16(buffer.data()) != DATA) {
